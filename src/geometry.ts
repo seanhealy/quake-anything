@@ -7,6 +7,31 @@ export interface Rect {
     height: number;
 }
 
+/** Clamp/validate a monitor index; fall back to current monitor if invalid. */
+export function sanitizeMonitorIndex(monitorIndex: number): number {
+    const display = global.display;
+    const n = display.get_n_monitors();
+    if (n <= 0)
+        return 0;
+    if (Number.isInteger(monitorIndex) && monitorIndex >= 0 && monitorIndex < n)
+        return monitorIndex;
+    const current = display.get_current_monitor();
+    if (Number.isInteger(current) && current >= 0 && current < n)
+        return current;
+    return 0;
+}
+
+export function isValidRect(rect: Rect): boolean {
+    return (
+        Number.isFinite(rect.x) &&
+        Number.isFinite(rect.y) &&
+        Number.isFinite(rect.width) &&
+        Number.isFinite(rect.height) &&
+        rect.width > 0 &&
+        rect.height > 0
+    );
+}
+
 export function getPointerMonitorIndex(): number {
     const [x, y] = global.get_pointer();
     const display = global.display;
@@ -16,12 +41,13 @@ export function getPointerMonitorIndex(): number {
         if (x >= geo.x && x < geo.x + geo.width && y >= geo.y && y < geo.y + geo.height)
             return i;
     }
-    return display.get_current_monitor();
+    return sanitizeMonitorIndex(display.get_current_monitor());
 }
 
 export function getWorkAreaForMonitor(monitorIndex: number): Rect {
+    const index = sanitizeMonitorIndex(monitorIndex);
     const workspace = global.workspace_manager.get_active_workspace();
-    const area = workspace.get_work_area_for_monitor(monitorIndex);
+    const area = workspace.get_work_area_for_monitor(index);
     return {
         x: area.x,
         y: area.y,

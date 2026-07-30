@@ -76,6 +76,11 @@ export class KeybindingManager {
             return false;
 
         const name = Meta.external_binding_name_for_action(action);
+        if (!name) {
+            global.display.ungrab_accelerator(action);
+            return false;
+        }
+
         Main.wm.allowKeybinding(
             name,
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP,

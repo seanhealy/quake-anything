@@ -8,13 +8,16 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {
     computeQuakeRect,
     getPointerMonitorIndex,
+    isValidRect,
     percentFromRect,
+    sanitizeMonitorIndex,
     slideOffsetForSide,
 } from './geometry.js';
 import type { QuakeEntry } from './types.js';
 
 const ANIM_MS = 180;
 const CLAIM_TIMEOUT_MS = 8000;
+const FIRST_FRAME_FALLBACK_MS = 750;
 
 interface PendingClaim {
     entryId: string;
@@ -25,6 +28,7 @@ interface PendingClaim {
 interface FirstFrameWatch {
     actor: Clutter.Actor;
     signalId: number;
+    fallbackId: number;
 }
 
 function unmaximizeCompat(win: Meta.Window): void {
@@ -36,6 +40,8 @@ function unmaximizeCompat(win: Meta.Window): void {
         maximized_vertically?: boolean;
     };
 
+    // Shell 49+: prefer no-arg unmaximize / set_unmaximize_flags; never pass flags
+    // to unmaximize when get_maximize_flags exists (flagged form was removed).
     if (typeof w.get_maximize_flags === 'function') {
         const flags = w.get_maximize_flags() as number;
         if (flags !== 0) {
@@ -49,8 +55,6 @@ function unmaximizeCompat(win: Meta.Window): void {
             }
             if (typeof w.set_unmaximize_flags === 'function')
                 w.set_unmaximize_flags(Meta.MaximizeFlags.BOTH);
-            else if (typeof w.unmaximize === 'function')
-                w.unmaximize(Meta.MaximizeFlags.BOTH);
         }
         return;
     }
@@ -135,17 +139,32 @@ export class QuakeManager {
             return;
 
         const win = this._windows.get(entryId);
-        if (!win || win.get_compositor_private() == null) {
-            this._windows.delete(entryId);
+        if (!win || !this._isWindowAlive(win)) {
+            this._detachWindow(entryId, true);
             this._spawn(entry);
             return;
         }
 
         // Shortcut always hides when visible; next press restores quake geometry.
-        if (this._isVisible(win))
-            this._hide(entryId, win, entry);
-        else
-            this._show(entryId, win, entry);
+        try {
+            if (this._isVisible(win))
+                this._hide(entryId, win, entry);
+            else
+                this._show(entryId, win, entry);
+        } catch (e) {
+            console.error('[quake-anything] toggle failed', e);
+            this._detachWindow(entryId, true);
+        }
+    }
+
+    private _isWindowAlive(win: Meta.Window | null | undefined): boolean {
+        if (!win)
+            return false;
+        try {
+            return win.get_compositor_private() != null;
+        } catch {
+            return false;
+        }
     }
 
     private _spawn(entry: QuakeEntry): void {
@@ -191,10 +210,14 @@ export class QuakeManager {
         this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
             if (!this._pending || this._pending.entryId !== pending.entryId)
                 return GLib.SOURCE_REMOVE;
+            if (!this._isWindowAlive(win))
+                return GLib.SOURCE_REMOVE;
 
             if (!this._windowMatchesPending(win, pending.appId)) {
                 this._timeoutAdd(GLib.PRIORITY_DEFAULT, 100, () => {
                     if (!this._pending || this._pending.entryId !== pending.entryId)
+                        return GLib.SOURCE_REMOVE;
+                    if (!this._isWindowAlive(win))
                         return GLib.SOURCE_REMOVE;
                     if (this._windowMatchesPending(win, pending.appId))
                         this._claimWindow(pending.entryId, win);
@@ -209,16 +232,20 @@ export class QuakeManager {
     }
 
     private _windowMatchesPending(win: Meta.Window, appId: string): boolean {
-        const tracker = Shell.WindowTracker.get_default();
-        const app = tracker.get_window_app(win);
-        if (!app)
+        try {
+            const tracker = Shell.WindowTracker.get_default();
+            const app = tracker.get_window_app(win);
+            if (!app)
+                return false;
+            return this._normalizeAppId(app.get_id()) === this._normalizeAppId(appId);
+        } catch {
             return false;
-        return this._normalizeAppId(app.get_id()) === this._normalizeAppId(appId);
+        }
     }
 
     private _claimWindow(entryId: string, win: Meta.Window): void {
         const entry = this._entries.get(entryId);
-        if (!entry)
+        if (!entry || !this._isWindowAlive(win))
             return;
 
         this._clearPending();
@@ -237,16 +264,27 @@ export class QuakeManager {
         });
         this._unmanagedIds.set(entryId, unmanagedId);
 
-        const actor = win.get_compositor_private() as Clutter.Actor | null;
         const place = () => {
             this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
-                if (this._windows.get(entryId) !== win)
+                if (this._windows.get(entryId) !== win || !this._isWindowAlive(win))
                     return GLib.SOURCE_REMOVE;
-                this._applyQuakeGeometry(entryId, win, entry, true);
-                this._show(entryId, win, entry);
+                try {
+                    this._applyQuakeGeometry(entryId, win, entry, true);
+                    this._show(entryId, win, entry);
+                } catch (e) {
+                    console.error('[quake-anything] place failed', e);
+                    this._detachWindow(entryId, true);
+                }
                 return GLib.SOURCE_REMOVE;
             });
         };
+
+        let actor: Clutter.Actor | null = null;
+        try {
+            actor = win.get_compositor_private() as Clutter.Actor | null;
+        } catch {
+            actor = null;
+        }
 
         if (actor) {
             this._clearFirstFrameWatch(entryId);
@@ -254,7 +292,19 @@ export class QuakeManager {
                 this._clearFirstFrameWatch(entryId);
                 place();
             });
-            this._firstFrameWatches.set(entryId, { actor, signalId });
+            const fallbackId = this._timeoutAdd(
+                GLib.PRIORITY_DEFAULT,
+                FIRST_FRAME_FALLBACK_MS,
+                () => {
+                    const watch = this._firstFrameWatches.get(entryId);
+                    if (!watch || watch.fallbackId !== fallbackId)
+                        return GLib.SOURCE_REMOVE;
+                    this._clearFirstFrameWatch(entryId);
+                    place();
+                    return GLib.SOURCE_REMOVE;
+                },
+            );
+            this._firstFrameWatches.set(entryId, { actor, signalId, fallbackId });
         } else {
             this._timeoutAdd(GLib.PRIORITY_DEFAULT, 100, () => {
                 place();
@@ -268,14 +318,21 @@ export class QuakeManager {
         this._disconnectUnmanaged(entryId, win);
         this._clearFirstFrameWatch(entryId);
 
+        // Always drop animation flag; try to stop transitions while actor exists.
+        this._animating.delete(entryId);
         if (win) {
-            const actor = win.get_compositor_private() as Clutter.Actor | null;
-            actor?.remove_all_transitions();
-            actor?.set_translation(0, 0, 0);
+            try {
+                const actor = win.get_compositor_private() as Clutter.Actor | null;
+                if (actor) {
+                    actor.remove_all_transitions();
+                    actor.set_translation(0, 0, 0);
+                }
+            } catch {
+                // Window/actor may already be gone.
+            }
         }
 
         this._windows.delete(entryId);
-        this._animating.delete(entryId);
         this._applyingGeometry.delete(entryId);
         if (resetSessionState) {
             this._livePercent.delete(entryId);
@@ -300,6 +357,8 @@ export class QuakeManager {
         this._firstFrameWatches.delete(entryId);
         if (!watch)
             return;
+        if (watch.fallbackId)
+            this._removeSource(watch.fallbackId);
         try {
             watch.actor.disconnect(watch.signalId);
         } catch {
@@ -321,25 +380,33 @@ export class QuakeManager {
             return;
         if (this._applyingGeometry.has(entryId) || this._animating.has(entryId))
             return;
+        if (!this._isWindowAlive(win))
+            return;
 
         const entry = this._entries.get(entryId);
         if (!entry)
             return;
+
+        const safeIndex = sanitizeMonitorIndex(monitorIndex);
         if (win.minimized || !this._isVisible(win)) {
-            this._lastMonitor.set(entryId, monitorIndex);
+            this._lastMonitor.set(entryId, safeIndex);
             return;
         }
 
         const previous = this._lastMonitor.get(entryId);
-        this._lastMonitor.set(entryId, monitorIndex);
-        if (previous === monitorIndex)
+        this._lastMonitor.set(entryId, safeIndex);
+        if (previous === safeIndex)
             return;
 
         // Re-dock on the new monitor using the preserved size ratio.
         this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            if (this._windows.get(entryId) !== win)
+            if (this._windows.get(entryId) !== win || !this._isWindowAlive(win))
                 return GLib.SOURCE_REMOVE;
-            this._applyQuakeGeometry(entryId, win, entry, false);
+            try {
+                this._applyQuakeGeometry(entryId, win, entry, false);
+            } catch (e) {
+                console.error('[quake-anything] monitor re-dock failed', e);
+            }
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -350,15 +417,21 @@ export class QuakeManager {
 
     /** Snapshot size % along the docked axis for the next quake show. */
     private _rememberQuakePercent(entryId: string, win: Meta.Window, entry: QuakeEntry): void {
-        const frame = win.get_frame_rect();
-        const monitor = win.get_monitor();
-        const percent = percentFromRect(
-            entry.side,
-            { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
-            monitor,
-        );
-        this._livePercent.set(entryId, percent);
-        this._lastMonitor.set(entryId, monitor);
+        if (!this._isWindowAlive(win))
+            return;
+        try {
+            const frame = win.get_frame_rect();
+            const monitor = sanitizeMonitorIndex(win.get_monitor());
+            const percent = percentFromRect(
+                entry.side,
+                { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
+                monitor,
+            );
+            this._livePercent.set(entryId, percent);
+            this._lastMonitor.set(entryId, monitor);
+        } catch (e) {
+            console.error('[quake-anything] remember percent failed', e);
+        }
     }
 
     private _applyQuakeGeometry(
@@ -367,19 +440,27 @@ export class QuakeManager {
         entry: QuakeEntry,
         usePointerMonitor: boolean,
     ): void {
+        if (!this._isWindowAlive(win))
+            return;
+
         const percent = this._effectivePercent(entryId, entry);
         // Always dock where the window *is* (or under the pointer on first spawn).
         // Never force a stale _lastMonitor — that undoes cross-monitor moves.
-        const monitor = usePointerMonitor
+        const rawMonitor = usePointerMonitor
             ? getPointerMonitorIndex()
             : win.get_monitor();
+        const monitor = sanitizeMonitorIndex(rawMonitor);
         const rect = computeQuakeRect(entry.side, percent, monitor);
+        if (!isValidRect(rect)) {
+            console.error('[quake-anything] refusing invalid quake rect', rect);
+            return;
+        }
 
         this._applyingGeometry.add(entryId);
         try {
             unmaximizeCompat(win);
 
-            if (win.get_monitor() !== monitor)
+            if (sanitizeMonitorIndex(win.get_monitor()) !== monitor)
                 win.move_to_monitor(monitor);
 
             const workspace = global.workspace_manager.get_active_workspace();
@@ -391,6 +472,9 @@ export class QuakeManager {
             // Seed live % so later monitor hops keep a known ratio even before hide.
             if (!this._livePercent.has(entryId))
                 this._livePercent.set(entryId, percent);
+        } catch (e) {
+            console.error('[quake-anything] apply geometry failed', e);
+            throw e;
         } finally {
             this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
                 this._applyingGeometry.delete(entryId);
@@ -400,63 +484,97 @@ export class QuakeManager {
     }
 
     private _isVisible(win: Meta.Window): boolean {
-        if (win.minimized)
+        try {
+            if (win.minimized)
+                return false;
+            const actor = win.get_compositor_private() as Clutter.Actor | null;
+            if (!actor || !actor.visible)
+                return false;
+            return true;
+        } catch {
             return false;
-        const actor = win.get_compositor_private() as Clutter.Actor | null;
-        if (!actor || !actor.visible)
-            return false;
-        return true;
+        }
     }
 
     private _show(entryId: string, win: Meta.Window, entry: QuakeEntry): void {
         if (this._animating.has(entryId))
             return;
-
-        if (win.minimized)
-            win.unminimize();
-
-        // Shortcut show always restores docked quake layout (not free-float position).
-        this._applyQuakeGeometry(entryId, win, entry, false);
-
-        win.activate(global.get_current_time());
-
-        const actor = win.get_compositor_private() as Clutter.Actor | null;
-        if (!actor)
+        if (!this._isWindowAlive(win)) {
+            this._detachWindow(entryId, true);
             return;
+        }
 
-        const rect = computeQuakeRect(
-            entry.side,
-            this._effectivePercent(entryId, entry),
-            win.get_monitor(),
-        );
-        const offset = slideOffsetForSide(entry.side, rect);
-        actor.remove_all_transitions();
-        actor.set_translation(offset.x, offset.y, 0);
-        this._animating.add(entryId);
-        actor.ease({
-            translationX: 0,
-            translationY: 0,
-            duration: ANIM_MS,
-            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-            onStopped: () => {
-                this._animating.delete(entryId);
-            },
-        });
+        try {
+            if (win.minimized)
+                win.unminimize();
+
+            // Shortcut show always restores docked quake layout (not free-float position).
+            this._applyQuakeGeometry(entryId, win, entry, false);
+
+            if (!this._isWindowAlive(win)) {
+                this._detachWindow(entryId, true);
+                return;
+            }
+
+            win.activate(global.get_current_time());
+
+            const actor = win.get_compositor_private() as Clutter.Actor | null;
+            if (!actor)
+                return;
+
+            const rect = computeQuakeRect(
+                entry.side,
+                this._effectivePercent(entryId, entry),
+                sanitizeMonitorIndex(win.get_monitor()),
+            );
+            if (!isValidRect(rect))
+                return;
+
+            const offset = slideOffsetForSide(entry.side, rect);
+            actor.remove_all_transitions();
+            actor.set_translation(offset.x, offset.y, 0);
+            this._animating.add(entryId);
+            actor.ease({
+                translationX: 0,
+                translationY: 0,
+                duration: ANIM_MS,
+                mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+                onStopped: () => {
+                    this._animating.delete(entryId);
+                },
+            });
+        } catch (e) {
+            console.error('[quake-anything] show failed', e);
+            this._animating.delete(entryId);
+            this._detachWindow(entryId, true);
+        }
     }
 
     private _hide(entryId: string, win: Meta.Window, entry: QuakeEntry): void {
         if (this._animating.has(entryId))
             return;
+        if (!this._isWindowAlive(win)) {
+            this._detachWindow(entryId, true);
+            return;
+        }
 
-        // Preserve size % / monitor for next quake show; leave free-float until then.
-        this._rememberQuakePercent(entryId, win, entry);
+        try {
+            // Preserve size % / monitor for next quake show; leave free-float until then.
+            this._rememberQuakePercent(entryId, win, entry);
 
-        const actor = win.get_compositor_private() as Clutter.Actor | null;
-        actor?.remove_all_transitions();
-        actor?.set_translation(0, 0, 0);
-        this._animating.delete(entryId);
+            const actor = win.get_compositor_private() as Clutter.Actor | null;
+            if (actor) {
+                actor.remove_all_transitions();
+                actor.set_translation(0, 0, 0);
+            }
+            this._animating.delete(entryId);
 
-        win.minimize();
+            win.minimize();
+        } catch (e) {
+            console.error('[quake-anything] hide failed', e);
+            this._animating.delete(entryId);
+            this._detachWindow(entryId, true);
+        }
     }
 
     private _resolveApp(appId: string): Shell.App | null {
