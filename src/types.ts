@@ -48,3 +48,9 @@ export function entriesToTuples(entries: QuakeEntry[]): QuakeEntryTuple[] {
 export function createEntryId(): string {
     return `entry-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
+
+/** Replace `%s` placeholders left-to-right (translator-friendly printf-style). */
+export function formatMessage(template: string, ...args: string[]): string {
+    let i = 0;
+    return template.replace(/%s/g, () => args[i++] ?? '');
+}

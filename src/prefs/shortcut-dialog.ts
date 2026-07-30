@@ -1,8 +1,10 @@
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
 import Gtk from 'gi://Gtk';
+import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import { acceleratorIsValid, findShortcutConflict } from './conflicts.js';
+import {acceleratorIsValid, findShortcutConflict} from './conflicts.js';
+import {formatMessage} from '../types.js';
 
 export interface ShortcutDialogResult {
     accelerator: string | null; // null = cancelled, '' = disabled
@@ -24,7 +26,7 @@ export class ShortcutDialog {
         this._otherShortcuts = otherShortcuts;
 
         this._window = new Adw.Window({
-            title: 'Set Shortcut',
+            title: _('Set Shortcut'),
             modal: true,
             transient_for: parent,
             default_width: 500,
@@ -51,14 +53,16 @@ export class ShortcutDialog {
         });
 
         const instruction = new Gtk.Label({
-            label: `Enter new shortcut to change <b>${escapeMarkup(actionLabel)}</b>`,
+            label: formatMessage(
+                _('Enter new shortcut to change <b>%s</b>'),
+                escapeMarkup(actionLabel),
+            ),
             use_markup: true,
             wrap: true,
             justify: Gtk.Justification.CENTER,
         });
         box.append(instruction);
 
-        // Minimal keyboard hint graphic (CSS-drawn keys)
         const keysRow = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 8,
@@ -84,7 +88,7 @@ export class ShortcutDialog {
         box.append(keysRow);
 
         this._status = new Gtk.Label({
-            label: 'Press a key combination…',
+            label: _('Press a key combination…'),
             wrap: true,
             justify: Gtk.Justification.CENTER,
         });
@@ -102,7 +106,7 @@ export class ShortcutDialog {
         box.append(this._warn);
 
         const footer = new Gtk.Label({
-            label: 'Press Esc to cancel or Backspace to disable the keyboard shortcut',
+            label: _('Press Esc to cancel or Backspace to disable the keyboard shortcut'),
             wrap: true,
             justify: Gtk.Justification.CENTER,
         });
@@ -119,7 +123,7 @@ export class ShortcutDialog {
         this._window.add_controller(controller);
 
         this._window.connect('close-request', () => {
-            this._finish({ accelerator: null, conflict: null });
+            this._finish({accelerator: null, conflict: null});
             return false;
         });
     }
@@ -133,16 +137,15 @@ export class ShortcutDialog {
 
     private _onKeyPressed(keyval: number, keycode: number, state: Gdk.ModifierType): boolean {
         if (keyval === Gdk.KEY_Escape) {
-            this._finish({ accelerator: null, conflict: null });
+            this._finish({accelerator: null, conflict: null});
             return true;
         }
 
         if (keyval === Gdk.KEY_BackSpace || keyval === Gdk.KEY_Delete) {
-            this._finish({ accelerator: '', conflict: null });
+            this._finish({accelerator: '', conflict: null});
             return true;
         }
 
-        // Ignore lone modifiers
         if (
             keyval === Gdk.KEY_Control_L || keyval === Gdk.KEY_Control_R
             || keyval === Gdk.KEY_Shift_L || keyval === Gdk.KEY_Shift_R
@@ -156,22 +159,22 @@ export class ShortcutDialog {
 
         const mods = state & Gtk.accelerator_get_default_mod_mask();
         const display = this._window.get_display();
-        let accel = '';
-        try {
-            accel = Gtk.accelerator_name_with_keycode(display, keyval, keycode, mods) ?? '';
-        } catch {
+        let accel = Gtk.accelerator_name_with_keycode(display, keyval, keycode, mods) ?? '';
+        if (!accel)
             accel = Gtk.accelerator_name(keyval, mods) ?? '';
-        }
 
         if (!accel || !acceleratorIsValid(accel)) {
-            this._status.label = 'Invalid shortcut';
+            this._status.label = _('Invalid shortcut');
             return true;
         }
 
         const conflict = findShortcutConflict(accel, this._otherShortcuts);
         this._status.label = accel.replace(/</g, '').replace(/>/g, '+');
         if (conflict) {
-            this._warn.label = `Warning: this shortcut is already used by ${conflict}. It may not work.`;
+            this._warn.label = formatMessage(
+                _('Warning: this shortcut is already used by %s. It may not work.'),
+                conflict,
+            );
             this._warn.visible = true;
         } else {
             this._warn.visible = false;

@@ -8,10 +8,11 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import { ShortcutDialog } from './prefs/shortcut-dialog.js';
+import {ShortcutDialog} from './prefs/shortcut-dialog.js';
 import {
     createEntryId,
     entriesToTuples,
+    formatMessage,
     isQuakeSide,
     parseEntries,
     type QuakeEntry,
@@ -19,12 +20,14 @@ import {
     type QuakeSide,
 } from './types.js';
 
-const SIDE_LABELS: { id: QuakeSide; title: string; subtitle: string }[] = [
-    { id: 'top', title: 'Top', subtitle: 'Docked to top, expands downward' },
-    { id: 'bottom', title: 'Bottom', subtitle: 'Docked to bottom, expands upward' },
-    { id: 'left', title: 'Left', subtitle: 'Docked to left, expands rightward' },
-    { id: 'right', title: 'Right', subtitle: 'Docked to right, expands leftward' },
-];
+function sideLabels(): {id: QuakeSide; title: string; subtitle: string}[] {
+    return [
+        {id: 'top', title: _('Top'), subtitle: _('Docked to top, expands downward')},
+        {id: 'bottom', title: _('Bottom'), subtitle: _('Docked to bottom, expands upward')},
+        {id: 'left', title: _('Left'), subtitle: _('Docked to left, expands rightward')},
+        {id: 'right', title: _('Right'), subtitle: _('Docked to right, expands leftward')},
+    ];
+}
 
 /**
  * Host object passed to fillPreferencesWindow.
@@ -44,11 +47,12 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
     private _listGroup: Adw.PreferencesGroup | null = null;
     private _window: PrefsHost | null = null;
     private _settings: Gio.Settings | null = null;
+    private _settingsChangedId = 0;
     private _rows: Gtk.Widget[] = [];
 
     async fillPreferencesWindow(window: PrefsHost): Promise<void> {
         const settings = this.getSettings();
-        (window as PrefsHost & { _settings?: Gio.Settings })._settings = settings;
+        (window as PrefsHost & {_settings?: Gio.Settings})._settings = settings;
         this._window = window;
         this._settings = settings;
 
@@ -69,7 +73,20 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         page.add(this._listGroup);
 
         this._rebuildList();
-        settings.connect('changed::entries', () => this._rebuildList());
+        this._settingsChangedId = settings.connect('changed::entries', () => {
+            this._rebuildList();
+        });
+        window.connect('close-request', () => {
+            this._disconnectSettings();
+            return false;
+        });
+    }
+
+    private _disconnectSettings(): void {
+        if (this._settings && this._settingsChangedId) {
+            this._settings.disconnect(this._settingsChangedId);
+            this._settingsChangedId = 0;
+        }
     }
 
     private _rebuildList(): void {
@@ -79,13 +96,13 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         if (!group || !window || !settings)
             return;
 
-        // PreferencesGroup rows are not flat GTK children — remove by reference.
         for (const row of this._rows)
             group.remove(row);
         this._rows = [];
 
+        const labels = sideLabels();
         for (const entry of this._loadEntries(settings)) {
-            const row = this._createEntryRow(window, settings, entry);
+            const row = this._createEntryRow(window, settings, entry, labels);
             group.add(row);
             this._rows.push(row);
         }
@@ -94,7 +111,7 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
             activatable: true,
             title: _('Add Application'),
         });
-        addRow.add_prefix(new Gtk.Image({ icon_name: 'list-add-symbolic' }));
+        addRow.add_prefix(new Gtk.Image({icon_name: 'list-add-symbolic'}));
         addRow.connect('activated', () => {
             this._openEditor(window, settings, null);
         });
@@ -106,11 +123,12 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         window: PrefsHost,
         settings: Gio.Settings,
         entry: QuakeEntry,
+        labels: {id: QuakeSide; title: string; subtitle: string}[],
     ): Adw.ActionRow {
         const appInfo = GioUnix.DesktopAppInfo.new(entry.appId)
             ?? GioUnix.DesktopAppInfo.new(`${entry.appId}.desktop`);
         const title = appInfo?.get_display_name() ?? entry.appId;
-        const sideInfo = SIDE_LABELS.find(s => s.id === entry.side);
+        const sideInfo = labels.find(s => s.id === entry.side);
         const shortcut = entry.shortcut
             ? entry.shortcut.replace(/</g, '').replace(/>/g, '+')
             : _('Disabled');
@@ -165,6 +183,7 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         settings: Gio.Settings,
         existing: QuakeEntry | null,
     ): void {
+        const labels = sideLabels();
         const dialog = new Adw.Dialog({
             title: existing ? _('Edit Application') : _('Add Application'),
             content_width: 480,
@@ -207,18 +226,18 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         });
         group.add(appRow);
 
-        const sideModel = Gtk.StringList.new(SIDE_LABELS.map(s => s.title));
+        const sideModel = Gtk.StringList.new(labels.map(s => s.title));
         const sideRow = new Adw.ComboRow({
             title: _('Side'),
-            subtitle: SIDE_LABELS.find(s => s.id === side)?.subtitle ?? '',
+            subtitle: labels.find(s => s.id === side)?.subtitle ?? '',
             model: sideModel,
-            selected: Math.max(0, SIDE_LABELS.findIndex(s => s.id === side)),
+            selected: Math.max(0, labels.findIndex(s => s.id === side)),
         });
         sideRow.connect('notify::selected', () => {
             const idx = sideRow.selected;
-            if (idx >= 0 && idx < SIDE_LABELS.length) {
-                side = SIDE_LABELS[idx].id;
-                sideRow.subtitle = SIDE_LABELS[idx].subtitle;
+            if (idx >= 0 && idx < labels.length) {
+                side = labels[idx].id;
+                sideRow.subtitle = labels[idx].subtitle;
             }
         });
         group.add(sideRow);
@@ -251,7 +270,10 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
             shortcutRow.subtitle = shortcut || _('Disabled');
             if (result.conflict) {
                 window.add_toast(new Adw.Toast({
-                    title: _('Warning: shortcut may conflict with %s').replace('%s', result.conflict),
+                    title: formatMessage(
+                        _('Warning: shortcut may conflict with %s'),
+                        result.conflict,
+                    ),
                     timeout: 5,
                 }));
             }
@@ -277,19 +299,19 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         toolbar.set_content(page);
         dialog.set_child(toolbar);
 
-        const cancelBtn = new Gtk.Button({ label: _('Cancel') });
+        const cancelBtn = new Gtk.Button({label: _('Cancel')});
         cancelBtn.connect('clicked', () => dialog.close());
         header.pack_start(cancelBtn);
 
-        const saveBtn = new Gtk.Button({ label: _('Save') });
+        const saveBtn = new Gtk.Button({label: _('Save')});
         saveBtn.add_css_class('suggested-action');
         saveBtn.connect('clicked', () => {
             if (!appId) {
-                window.add_toast(new Adw.Toast({ title: _('Please choose an application') }));
+                window.add_toast(new Adw.Toast({title: _('Please choose an application')}));
                 return;
             }
             if (!isQuakeSide(side)) {
-                window.add_toast(new Adw.Toast({ title: _('Please choose a side') }));
+                window.add_toast(new Adw.Toast({title: _('Please choose a side')}));
                 return;
             }
 
@@ -350,7 +372,7 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
             .sort((a, b) =>
                 (a.get_display_name() ?? '').localeCompare(b.get_display_name() ?? ''));
 
-        const rows: { row: Gtk.ListBoxRow; name: string; id: string }[] = [];
+        const rows: {row: Gtk.ListBoxRow; name: string; id: string}[] = [];
         for (const app of apps) {
             const id = app.get_id()!;
             const name = app.get_display_name() ?? id;
@@ -363,7 +385,7 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
                 margin_top: 6,
                 margin_bottom: 6,
             });
-            const image = new Gtk.Image({ pixel_size: 32 });
+            const image = new Gtk.Image({pixel_size: 32});
             const gicon = app.get_icon();
             if (gicon)
                 image.gicon = gicon;
@@ -377,7 +399,7 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
             }));
             row.set_child(box);
             list.append(row);
-            rows.push({ row, name: name.toLowerCase(), id });
+            rows.push({row, name: name.toLowerCase(), id});
         }
 
         search.connect('search-changed', () => {
@@ -402,13 +424,13 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
             child: list,
         });
 
-        const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+        const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL});
         box.append(search);
         box.append(scroll);
         toolbar.set_content(box);
         dialog.set_child(toolbar);
 
-        const cancel = new Gtk.Button({ label: _('Cancel') });
+        const cancel = new Gtk.Button({label: _('Cancel')});
         cancel.connect('clicked', () => dialog.close());
         header.pack_start(cancel);
 

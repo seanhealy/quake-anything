@@ -5,7 +5,7 @@ Drop down (or side-dock) **any** GUI app with a keyboard shortcut — Quake-styl
 Configure apps in **Extension Manager** / **Extensions** → Quake Anything → Settings. There is no panel tray icon.
 
 **UUID:** `quake-anything@yccoskun.github.io`  
-**GNOME Shell:** 45–50
+**GNOME Shell:** 46–50
 
 ## Features
 

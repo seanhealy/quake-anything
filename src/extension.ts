@@ -2,11 +2,11 @@ import '@girs/gnome-shell/extensions/global';
 
 import type Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import { KeybindingManager } from './keybindings.js';
-import { QuakeManager } from './quake-manager.js';
-import { parseEntries, type QuakeEntry, type QuakeEntryTuple } from './types.js';
+import {KeybindingManager} from './keybindings.js';
+import {QuakeManager} from './quake-manager.js';
+import {formatMessage, parseEntries, type QuakeEntry, type QuakeEntryTuple} from './types.js';
 
 export default class QuakeAnythingExtension extends Extension {
     private _settings: Gio.Settings | null = null;
@@ -16,6 +16,8 @@ export default class QuakeAnythingExtension extends Extension {
     private _boundIds = new Set<string>();
 
     enable() {
+        this.initTranslations();
+
         this._settings = this.getSettings();
         this._quake = new QuakeManager();
         this._keys = new KeybindingManager();
@@ -75,12 +77,16 @@ export default class QuakeAnythingExtension extends Extension {
             const ok = this._keys.bind(entry.id, entry.shortcut, () => {
                 this._quake?.toggle(entry.id);
             });
-            this._boundIds.add(entry.id);
 
-            if (!ok) {
+            if (ok) {
+                this._boundIds.add(entry.id);
+            } else {
                 Main.notify(
-                    'Quake Anything',
-                    `Shortcut "${entry.shortcut}" is already in use and could not be bound.`,
+                    _('Quake Anything'),
+                    formatMessage(
+                        _('Shortcut "%s" is already in use and could not be bound.'),
+                        entry.shortcut,
+                    ),
                 );
             }
         }
