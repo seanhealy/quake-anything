@@ -1,17 +1,21 @@
 {
-    "compilerOptions": {
-      "target": "ES2022",
-      "module": "ESNext",
-      "moduleResolution": "bundler",
-      "strict": true,
-      "skipLibCheck": true,
-      "noImplicitAny": true,
-      "allowSyntheticDefaultImports": true,
-      "types": [
-        "@girs/gjs",
-        "@girs/gnome-shell/ambient",
-        "@girs/gnome-shell/extensions/global"
-      ]
-    },
-    "include": ["src/**/*"]
-  }
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "skipLibCheck": true,
+    "noImplicitAny": true,
+    "allowSyntheticDefaultImports": true,
+    "declaration": false,
+    "sourceMap": false,
+    "types": [
+      "@girs/gjs",
+      "@girs/gnome-shell/ambient",
+      "@girs/gnome-shell/extensions/global"
+    ]
+  },
+  "include": ["src/**/*"]
+}

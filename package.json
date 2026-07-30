@@ -3,19 +3,19 @@
   "version": "1.0.2",
   "type": "module",
   "scripts": {
-    "build": "bun run build:extension && bun run build:prefs",
-    "build:extension": "bun build ./src/extension.ts --outfile=./extension.js --target=node --format=esm --external=gi://* --external=resource://*",
-    "build:prefs": "bun build ./src/prefs.ts --outfile=./prefs.js --target=node --format=esm --external=gi://* --external=resource://*",
-    "watch": "bun build ./src/extension.ts --outfile=./extension.js --target=node --format=esm --external=gi://* --external=resource://* --watch",
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
     "schemas": "glib-compile-schemas schemas/",
-    "lint": "bun run build && eslint extension.js prefs.js",
-    "pack": "bun run build && bun run schemas && gnome-extensions pack --force --extra-source=LICENSE .",
-    "install-ext": "bun run build && bun run schemas && mkdir -p \"$HOME/.local/share/gnome-shell/extensions/quake-anything@yccoskun.github.io\" && rsync -a --delete --exclude node_modules --exclude .git --exclude src --exclude bun.lock --exclude tsconfig.json --exclude package.json --exclude '*.ts' ./ \"$HOME/.local/share/gnome-shell/extensions/quake-anything@yccoskun.github.io/\""
+    "stage": "bash scripts/stage.sh",
+    "lint": "bun run build && eslint \"dist/**/*.js\"",
+    "pack": "bun run stage && (cd build && gnome-extensions pack --force --extra-source=LICENSE --extra-source=types.js --extra-source=geometry.js --extra-source=keybindings.js --extra-source=quake-manager.js --extra-source=prefs .) && mv -f build/quake-anything@yccoskun.github.io.shell-extension.zip .",
+    "install-ext": "bun run stage && mkdir -p \"$HOME/.local/share/gnome-shell/extensions/quake-anything@yccoskun.github.io\" && rsync -a --delete build/ \"$HOME/.local/share/gnome-shell/extensions/quake-anything@yccoskun.github.io/\""
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@girs/gjs": "^4.0.0",
     "@girs/gnome-shell": "^50.0.0",
-    "eslint": "^9.32.0"
+    "eslint": "^9.32.0",
+    "typescript": "^5.9.2"
   }
 }

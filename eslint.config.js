@@ -1,13 +1,13 @@
 import js from '@eslint/js';
 
 /**
- * Lint the packed JS that EGO reviews (bun build output).
+ * Lint the modular JS that EGO reviews (tsc output under dist/).
  * Run `bun run build` before `bun run lint`.
  */
 export default [
     js.configs.recommended,
     {
-        files: ['extension.js', 'prefs.js'],
+        files: ['dist/**/*.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'module',

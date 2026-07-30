@@ -1,5 +1,3 @@
-import '@girs/gnome-shell/extensions/global';
-
 import type Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';

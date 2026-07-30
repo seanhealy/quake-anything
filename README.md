@@ -34,12 +34,14 @@ Configure apps in **Extension Manager** / **Extensions** → Quake Anything → 
 git clone https://github.com/yccoskun/quake-anything.git
 cd quake-anything
 bun install
-bun run build
-glib-compile-schemas schemas/
-gnome-extensions pack --force \
-  --extra-source=LICENSE \
-  .
+bun run pack
 gnome-extensions install --force quake-anything@yccoskun.github.io.shell-extension.zip
+```
+
+Or install straight into your user extensions directory:
+
+```bash
+bun run install-ext
 ```
 
 Then log out and back in (Wayland), and enable:
@@ -69,12 +71,19 @@ Press the shortcut to spawn. Press again to hide. Press again to show at the Qua
 
 ## Development
 
-Requires [Bun](https://bun.sh/) to build TypeScript:
+Requires [Bun](https://bun.sh/) (or Node) and TypeScript. Source under `src/` is compiled with `tsc` into separate modules under `dist/` (not bundled into one file — required for EGO review).
 
 ```bash
 bun install
-bun run build          # writes extension.js + prefs.js
+bun run build          # tsc → dist/*.js (+ dist/prefs/)
 bun run schemas        # compiles GSettings schemas
+bun run pack           # stages modular tree and packs the zip
+bun run install-ext    # stages and installs into ~/.local/share/...
 ```
 
-Source lives under `src/`. Runtime files for GNOME are `extension.js`, `prefs.js`, `metadata.json`, `stylesheet.css`, `LICENSE`, and `schemas/`.
+Packed runtime layout:
+
+- `extension.js`, `prefs.js` (entry points)
+- `types.js`, `geometry.js`, `keybindings.js`, `quake-manager.js`
+- `prefs/conflicts.js`, `prefs/shortcut-dialog.js`
+- `metadata.json`, `stylesheet.css`, `LICENSE`, `schemas/`
