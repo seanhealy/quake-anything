@@ -4,7 +4,6 @@ import GioUnix from 'gi://GioUnix';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {
@@ -20,7 +19,6 @@ import {formatMessage, type QuakeEntry} from './types.js';
 const ANIM_MS = 180;
 const CLAIM_TIMEOUT_MS = 8000;
 const FIRST_FRAME_FALLBACK_MS = 750;
-const SHELL_MAJOR = Number.parseInt(Config.PACKAGE_VERSION, 10);
 
 interface PendingClaim {
     entryId: string;
@@ -34,20 +32,10 @@ interface FirstFrameWatch {
     fallbackId: number;
 }
 
-/** Unmaximize using the Meta.Window API for the running Shell major version. */
+/** Shell 49+: unmaximize with no flags argument. */
 function unmaximizeWindow(win: Meta.Window): void {
-    if (SHELL_MAJOR >= 49) {
-        if (win.get_maximize_flags() !== 0)
-            win.unmaximize();
-        return;
-    }
-
-    if (win.maximized_horizontally || win.maximized_vertically) {
-        const legacy = win as Meta.Window & {
-            unmaximize(flags: Meta.MaximizeFlags): void;
-        };
-        legacy.unmaximize(Meta.MaximizeFlags.BOTH);
-    }
+    if (win.get_maximize_flags() !== 0)
+        win.unmaximize();
 }
 
 export class QuakeManager {
