@@ -26,6 +26,15 @@ export default [
                 caughtErrorsIgnorePattern: '^_',
             }],
             'no-empty': ['error', {allowEmptyCatch: true}],
+            // tsc emits class members and top-level declarations back-to-back with
+            // no blank lines; `eslint --fix` (run as part of `bun run build`)
+            // restores readable spacing, and `bun run lint` fails if it regresses.
+            'lines-between-class-members': ['error', 'always'],
+            'padding-line-between-statements': ['error', {
+                blankLine: 'always',
+                prev: ['function', 'class', 'export'],
+                next: ['function', 'class', 'export'],
+            }],
         },
     },
 ];

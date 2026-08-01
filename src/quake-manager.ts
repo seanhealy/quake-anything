@@ -28,7 +28,6 @@ interface PendingClaim {
 
 interface FirstFrameWatch {
     actor: Clutter.Actor;
-    signalId: number;
     fallbackId: number;
 }
 
@@ -44,34 +43,24 @@ export class QuakeManager {
     private _livePercent = new Map<string, number>();
     private _lastMonitor = new Map<string, number>();
     private _pending: PendingClaim | null = null;
-    private _windowCreatedId = 0;
-    private _enteredMonitorId = 0;
     private _animating = new Set<string>();
     private _applyingGeometry = new Set<string>();
     private _sourceIds = new Set<number>();
-    private _unmanagedIds = new Map<string, number>();
     private _firstFrameWatches = new Map<string, FirstFrameWatch>();
 
     enable(): void {
-        this._windowCreatedId = global.display.connect(
+        global.display.connectObject(
             'window-created',
-            (_d, win) => this._onWindowCreated(win),
-        );
-        this._enteredMonitorId = global.display.connect(
+            (_d: Meta.Display, win: Meta.Window) => this._onWindowCreated(win),
             'window-entered-monitor',
-            (_d, monitorIndex, win) => this._onEnteredMonitor(monitorIndex, win),
+            (_d: Meta.Display, monitorIndex: number, win: Meta.Window) =>
+                this._onEnteredMonitor(monitorIndex, win),
+            this,
         );
     }
 
     disable(): void {
-        if (this._windowCreatedId) {
-            global.display.disconnect(this._windowCreatedId);
-            this._windowCreatedId = 0;
-        }
-        if (this._enteredMonitorId) {
-            global.display.disconnect(this._enteredMonitorId);
-            this._enteredMonitorId = 0;
-        }
+        global.display.disconnectObject(this);
         this._clearPending();
         this._clearSources();
         for (const id of [...this._windows.keys()])
@@ -81,7 +70,6 @@ export class QuakeManager {
         this._lastMonitor.clear();
         this._applyingGeometry.clear();
         this._animating.clear();
-        this._unmanagedIds.clear();
         this._firstFrameWatches.clear();
     }
 
@@ -228,11 +216,10 @@ export class QuakeManager {
         this._livePercent.delete(entryId);
         this._lastMonitor.delete(entryId);
 
-        const unmanagedId = win.connect('unmanaged', () => {
+        win.connectObject('unmanaged', () => {
             if (this._windows.get(entryId) === win)
                 this._detachWindow(entryId, true);
-        });
-        this._unmanagedIds.set(entryId, unmanagedId);
+        }, this);
 
         const place = () => {
             this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -250,10 +237,10 @@ export class QuakeManager {
 
         if (actor) {
             this._clearFirstFrameWatch(entryId);
-            const signalId = actor.connect('first-frame', () => {
+            actor.connectObject('first-frame', () => {
                 this._clearFirstFrameWatch(entryId);
                 place();
-            });
+            }, this);
             const fallbackId = this._timeoutAdd(
                 GLib.PRIORITY_DEFAULT,
                 FIRST_FRAME_FALLBACK_MS,
@@ -266,7 +253,7 @@ export class QuakeManager {
                     return GLib.SOURCE_REMOVE;
                 },
             );
-            this._firstFrameWatches.set(entryId, { actor, signalId, fallbackId });
+            this._firstFrameWatches.set(entryId, { actor, fallbackId });
         } else {
             this._timeoutAdd(GLib.PRIORITY_DEFAULT, 100, () => {
                 place();
@@ -277,7 +264,7 @@ export class QuakeManager {
 
     private _detachWindow(entryId: string, resetSessionState: boolean): void {
         const win = this._windows.get(entryId);
-        this._disconnectUnmanaged(entryId, win);
+        win?.disconnectObject(this);
         this._clearFirstFrameWatch(entryId);
 
         this._animating.delete(entryId);
@@ -297,14 +284,6 @@ export class QuakeManager {
         }
     }
 
-    private _disconnectUnmanaged(entryId: string, win?: Meta.Window): void {
-        const signalId = this._unmanagedIds.get(entryId);
-        this._unmanagedIds.delete(entryId);
-        if (signalId == null || !win)
-            return;
-        win.disconnect(signalId);
-    }
-
     private _clearFirstFrameWatch(entryId: string): void {
         const watch = this._firstFrameWatches.get(entryId);
         this._firstFrameWatches.delete(entryId);
@@ -312,7 +291,7 @@ export class QuakeManager {
             return;
         if (watch.fallbackId)
             this._removeSource(watch.fallbackId);
-        watch.actor.disconnect(watch.signalId);
+        watch.actor.disconnectObject(this);
     }
 
     private _entryIdForWindow(win: Meta.Window): string | null {

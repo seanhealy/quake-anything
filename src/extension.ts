@@ -8,7 +8,6 @@ import {formatMessage, parseEntries, type QuakeEntry, type QuakeEntryTuple} from
 
 export default class QuakeAnythingExtension extends Extension {
     private _settings: Gio.Settings | null = null;
-    private _settingsChangedId = 0;
     private _quake: QuakeManager | null = null;
     private _keys: KeybindingManager | null = null;
     private _boundIds = new Set<string>();
@@ -24,16 +23,11 @@ export default class QuakeAnythingExtension extends Extension {
         this._keys.enable();
 
         this._reload();
-        this._settingsChangedId = this._settings.connect('changed::entries', () => {
-            this._reload();
-        });
+        this._settings.connectObject('changed::entries', () => this._reload(), this);
     }
 
     disable() {
-        if (this._settings && this._settingsChangedId) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = 0;
-        }
+        this._settings?.disconnectObject(this);
 
         this._keys?.disable();
         this._keys = null;

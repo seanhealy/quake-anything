@@ -19,13 +19,12 @@ interface Grabber {
 export class KeybindingManager {
     private _grabbers = new Map<number, Grabber>();
     private _byId = new Map<string, number>();
-    private _activatedId = 0;
     private _sourceIds = new Set<number>();
 
     enable(): void {
-        this._activatedId = global.display.connect(
+        global.display.connectObject(
             'accelerator-activated',
-            (_display, action) => {
+            (_display: Meta.Display, action: number) => {
                 const grabber = this._grabbers.get(action);
                 if (!grabber)
                     return;
@@ -42,14 +41,12 @@ export class KeybindingManager {
                 });
                 this._sourceIds.add(sourceId);
             },
+            this,
         );
     }
 
     disable(): void {
-        if (this._activatedId) {
-            global.display.disconnect(this._activatedId);
-            this._activatedId = 0;
-        }
+        global.display.disconnectObject(this);
         this._clearSources();
         for (const id of [...this._byId.keys()])
             this.unbind(id);

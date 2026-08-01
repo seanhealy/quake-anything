@@ -86,4 +86,4 @@ Packed runtime layout:
 - `extension.js`, `prefs.js` (entry points)
 - `types.js`, `geometry.js`, `keybindings.js`, `quake-manager.js`
 - `prefs/conflicts.js`, `prefs/shortcut-dialog.js`
-- `metadata.json`, `stylesheet.css`, `LICENSE`, `schemas/`
+- `metadata.json`, `LICENSE`, `schemas/`

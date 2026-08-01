@@ -10,5 +10,5 @@ bun run schemas
 rm -rf build
 mkdir -p build
 cp -a dist/. build/
-cp metadata.json LICENSE stylesheet.css build/
+cp metadata.json LICENSE build/
 cp -a schemas build/
