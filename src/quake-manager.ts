@@ -463,12 +463,57 @@ export class QuakeManager {
         this._rememberQuakePercent(entryId, win, entry);
 
         const actor = win.get_compositor_private() as Clutter.Actor | null;
-        if (actor) {
-            actor.remove_all_transitions();
-            actor.set_translation(0, 0, 0);
-        }
-        this._animating.delete(entryId);
+        const rect = computeQuakeRect(
+            entry.side,
+            this._effectivePercent(entryId, entry),
+            sanitizeMonitorIndex(win.get_monitor()),
+        );
 
+        // Without a usable actor or rect we cannot slide; minimize outright.
+        if (!actor || !isValidRect(rect)) {
+            if (actor) {
+                actor.remove_all_transitions();
+                actor.set_translation(0, 0, 0);
+            }
+            this._animating.delete(entryId);
+            this._minimizeWithoutAnimation(win);
+            return;
+        }
+
+        const offset = slideOffsetForSide(entry.side, rect);
+        actor.remove_all_transitions();
+        actor.set_translation(0, 0, 0);
+        this._animating.add(entryId);
+        actor.ease({
+            translationX: offset.x,
+            translationY: offset.y,
+            duration: ANIM_MS,
+            mode: Clutter.AnimationMode.EASE_IN_CUBIC,
+            onStopped: (isFinished: boolean) => {
+                this._animating.delete(entryId);
+                // Interrupted (e.g. detach/disable removed the transition):
+                // leave the window alone.
+                if (!isFinished)
+                    return;
+                if (this._windows.get(entryId) !== win || !this._isWindowAlive(win))
+                    return;
+
+                // The window is now slid fully off the work area; minimize it
+                // for real (keeping win.minimized as the source of truth) while
+                // suppressing the shell's built-in shrink animation, then reset
+                // the translation on the now-hidden actor for the next show.
+                this._minimizeWithoutAnimation(win);
+                const current = win.get_compositor_private() as Clutter.Actor | null;
+                current?.set_translation(0, 0, 0);
+            },
+        });
+    }
+
+    /** Minimize, skipping GNOME's default minimize (shrink) animation. */
+    private _minimizeWithoutAnimation(win: Meta.Window): void {
+        const actor = win.get_compositor_private() as Clutter.Actor | null;
+        if (actor)
+            Main.wm.skipNextEffect(actor);
         win.minimize();
     }
 
