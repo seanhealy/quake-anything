@@ -22,7 +22,10 @@ const FIRST_FRAME_FALLBACK_MS = 750;
 
 interface PendingClaim {
     entryId: string;
-    appId: string;
+    app: Shell.App;
+    /** Window ids the app already owned when we launched; the claimed
+     *  window is the first NORMAL one that is not in this set. */
+    before: Set<number>;
     timeoutId: number;
 }
 
@@ -40,6 +43,10 @@ function unmaximizeWindow(win: Meta.Window): void {
 export class QuakeManager {
     private _entries = new Map<string, QuakeEntry>();
     private _windows = new Map<string, Meta.Window>();
+    /** Stable Meta.Window id of the window we claimed for each entry, kept
+     *  independently of _windows so a lost-but-still-alive window can be
+     *  re-adopted instead of spawning a duplicate. */
+    private _windowIds = new Map<string, number>();
     private _livePercent = new Map<string, number>();
     private _lastMonitor = new Map<string, number>();
     private _pending: PendingClaim | null = null;
@@ -66,6 +73,7 @@ export class QuakeManager {
         for (const id of [...this._windows.keys()])
             this._detachWindow(id, false);
         this._entries.clear();
+        this._windowIds.clear();
         this._livePercent.clear();
         this._lastMonitor.clear();
         this._applyingGeometry.clear();
@@ -78,6 +86,7 @@ export class QuakeManager {
         for (const id of [...this._entries.keys()]) {
             if (!nextIds.has(id)) {
                 this._detachWindow(id, false);
+                this._windowIds.delete(id);
                 this._livePercent.delete(id);
                 this._lastMonitor.delete(id);
             }
@@ -97,11 +106,18 @@ export class QuakeManager {
         if (!entry)
             return;
 
-        const win = this._windows.get(entryId);
+        let win = this._windows.get(entryId);
         if (!win || !this._isWindowAlive(win)) {
-            this._detachWindow(entryId, true);
-            this._spawn(entry);
-            return;
+            // We lost the mapping but the window we spawned may still be
+            // alive; re-adopt it before falling back to a fresh spawn so we
+            // don't leave single-instance apps stuck or open duplicates.
+            const readopted = this._tryReadopt(entryId, entry);
+            if (!readopted) {
+                this._detachWindow(entryId, true);
+                this._spawn(entry);
+                return;
+            }
+            win = readopted;
         }
 
         if (this._isVisible(win))
@@ -130,22 +146,46 @@ export class QuakeManager {
             return;
         }
 
+        // Single-instance apps can't open a second window, so app.launch()
+        // would just refocus the running instance and never notify us. If the
+        // app already has a usable window, adopt that one instead of a no-op
+        // launch (this is what keeps single-window apps from "stopping").
+        if (!app.can_open_new_window()) {
+            const existing = this._firstNormalWindow(app);
+            if (existing) {
+                this._clearPending();
+                this._attachWindow(entry.id, existing);
+                this._livePercent.delete(entry.id);
+                this._lastMonitor.delete(entry.id);
+                this._show(entry.id, existing, entry);
+                return;
+            }
+        }
+
         this._clearPending();
+        const before = new Set(
+            app.get_windows().map(w => w.get_id()),
+        );
         const timeoutId = this._timeoutAdd(GLib.PRIORITY_DEFAULT, CLAIM_TIMEOUT_MS, () => {
             if (this._pending?.entryId === entry.id) {
                 Main.notify(
                     _('Quake Anything'),
                     formatMessage(_('Timed out waiting for %s'), entry.appId),
                 );
-                this._pending = null;
+                this._clearPending();
             }
             return GLib.SOURCE_REMOVE;
         });
-        this._pending = {
-            entryId: entry.id,
-            appId: this._normalizeAppId(entry.appId),
-            timeoutId,
-        };
+        this._pending = { entryId: entry.id, app, before, timeoutId };
+
+        // The app's own window list is authoritative; claim the first new
+        // window it reports. window-created is kept as a secondary trigger for
+        // apps whose windows-changed timing lags the compositor.
+        app.connectObject(
+            'windows-changed',
+            () => this._tryClaimFromApp(entry.id),
+            this,
+        );
 
         try {
             if (app.can_open_new_window()) {
@@ -164,41 +204,86 @@ export class QuakeManager {
         }
     }
 
-    private _onWindowCreated(win: Meta.Window): void {
+    private _onWindowCreated(_win: Meta.Window): void {
         const pending = this._pending;
         if (!pending)
             return;
 
+        // Defer a tick so the shell can associate the new window with its app.
         this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            if (!this._pending || this._pending.entryId !== pending.entryId)
-                return GLib.SOURCE_REMOVE;
-            if (!this._isWindowAlive(win))
-                return GLib.SOURCE_REMOVE;
-
-            if (!this._windowMatchesPending(win, pending.appId)) {
-                this._timeoutAdd(GLib.PRIORITY_DEFAULT, 100, () => {
-                    if (!this._pending || this._pending.entryId !== pending.entryId)
-                        return GLib.SOURCE_REMOVE;
-                    if (!this._isWindowAlive(win))
-                        return GLib.SOURCE_REMOVE;
-                    if (this._windowMatchesPending(win, pending.appId))
-                        this._claimWindow(pending.entryId, win);
-                    return GLib.SOURCE_REMOVE;
-                });
-                return GLib.SOURCE_REMOVE;
-            }
-
-            this._claimWindow(pending.entryId, win);
+            this._tryClaimFromApp(pending.entryId);
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    private _windowMatchesPending(win: Meta.Window, appId: string): boolean {
-        const tracker = Shell.WindowTracker.get_default();
-        const app = tracker.get_window_app(win);
+    /** Claim the first newly-appeared NORMAL window of the pending app. */
+    private _tryClaimFromApp(entryId: string): void {
+        const pending = this._pending;
+        if (!pending || pending.entryId !== entryId)
+            return;
+        const win = this._findNewWindow(pending);
+        if (win)
+            this._claimWindow(entryId, win);
+    }
+
+    private _findNewWindow(pending: PendingClaim): Meta.Window | null {
+        for (const win of pending.app.get_windows()) {
+            if (!this._isWindowAlive(win))
+                continue;
+            if (win.get_window_type() !== Meta.WindowType.NORMAL)
+                continue;
+            if (pending.before.has(win.get_id()))
+                continue;
+            return win;
+        }
+        return null;
+    }
+
+    private _firstNormalWindow(app: Shell.App): Meta.Window | null {
+        for (const win of app.get_windows()) {
+            if (this._isWindowAlive(win) && win.get_window_type() === Meta.WindowType.NORMAL)
+                return win;
+        }
+        return null;
+    }
+
+    /**
+     * Re-adopt the exact window we previously spawned for this entry if it is
+     * still alive. Matching on the remembered stable id (never an arbitrary
+     * window of the app) keeps the "only control windows we spawned" contract.
+     */
+    private _tryReadopt(entryId: string, entry: QuakeEntry): Meta.Window | null {
+        const rememberedId = this._windowIds.get(entryId);
+        if (rememberedId == null)
+            return null;
+
+        const app = this._resolveApp(entry.appId);
         if (!app)
-            return false;
-        return this._normalizeAppId(app.get_id()) === this._normalizeAppId(appId);
+            return null;
+
+        const match = app.get_windows().find(
+            w => this._isWindowAlive(w) && w.get_id() === rememberedId,
+        );
+        if (!match)
+            return null;
+
+        this._attachWindow(entryId, match);
+        return match;
+    }
+
+    /** Record a window as this entry's, wiring its destroy handler. */
+    private _attachWindow(entryId: string, win: Meta.Window): void {
+        const existing = this._windows.get(entryId);
+        if (existing && existing !== win)
+            this._detachWindow(entryId, false);
+
+        this._windows.set(entryId, win);
+        this._windowIds.set(entryId, win.get_id());
+
+        win.connectObject('unmanaged', () => {
+            if (this._windows.get(entryId) === win)
+                this._detachWindow(entryId, true);
+        }, this);
     }
 
     private _claimWindow(entryId: string, win: Meta.Window): void {
@@ -207,19 +292,9 @@ export class QuakeManager {
             return;
 
         this._clearPending();
-
-        const existing = this._windows.get(entryId);
-        if (existing && existing !== win)
-            this._detachWindow(entryId, false);
-
-        this._windows.set(entryId, win);
+        this._attachWindow(entryId, win);
         this._livePercent.delete(entryId);
         this._lastMonitor.delete(entryId);
-
-        win.connectObject('unmanaged', () => {
-            if (this._windows.get(entryId) === win)
-                this._detachWindow(entryId, true);
-        }, this);
 
         const place = () => {
             this._idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -500,10 +575,6 @@ export class QuakeManager {
         return null;
     }
 
-    private _normalizeAppId(appId: string): string {
-        return appId.trim().replace(/\.desktop$/i, '').toLowerCase();
-    }
-
     private _idleAdd(priority: number, callback: () => boolean): number {
         let sourceId = 0;
         sourceId = GLib.idle_add(priority, () => {
@@ -538,8 +609,11 @@ export class QuakeManager {
     }
 
     private _clearPending(): void {
-        if (this._pending?.timeoutId)
-            this._removeSource(this._pending.timeoutId);
+        if (this._pending) {
+            if (this._pending.timeoutId)
+                this._removeSource(this._pending.timeoutId);
+            this._pending.app.disconnectObject(this);
+        }
         this._pending = null;
     }
 }

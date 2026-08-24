@@ -67,7 +67,7 @@ Press the shortcut to spawn. Press again to hide. Press again to show at the Qua
 
 - On Wayland, reloading GNOME Shell requires logging out and back in. You can often reload just this extension with disable → enable.
 - Client-side window buttons (minimize/maximize) stay visible for many apps; GNOME does not let extensions remove them reliably.
-- Some single-instance apps may not open a second window when one is already running.
+- Some single-instance apps cannot open a second window when one is already running. For these, the shortcut adopts the app's existing window into the Quake layout instead of doing nothing.
 
 ## Development
 
