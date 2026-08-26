@@ -7,21 +7,27 @@ REPO="docker/sbx-releases"
 PREFIX="$HOME/.docker/sbx"
 ASSET="DockerSandboxes-linux-amd64.tar.gz"
 
-version="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+latest="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep -oP '"tag_name":\s*"\K[^"]+')"
 
-if [ -x "$PREFIX/bin/sbx" ] && "$PREFIX/bin/sbx" version 2>/dev/null | grep -q "$version"; then
-  echo "sbx $version already installed."
+current=""
+[ -x "$PREFIX/bin/sbx" ] && current="$("$PREFIX/bin/sbx" version 2>/dev/null | grep -oP 'v\d+\.\d+\.\d+' | head -1)"
+
+if [ "$current" = "$latest" ]; then
+  echo "sbx $latest is already up to date."
   exit 0
+elif [ -n "$current" ]; then
+  echo "Updating sbx $current -> $latest ..."
+  "$PREFIX/bin/sbx" daemon stop >/dev/null 2>&1 || true
+else
+  echo "Installing sbx $latest ..."
 fi
 
-echo "Installing sbx $version ..."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-curl -fL "https://github.com/$REPO/releases/download/$version/$ASSET" -o "$tmp/sbx.tar.gz"
+curl -fL "https://github.com/$REPO/releases/download/$latest/$ASSET" -o "$tmp/sbx.tar.gz"
 tar -xzf "$tmp/sbx.tar.gz" -C "$tmp"
 PREFIX="$PREFIX" "$tmp/docker-sbx/install.sh"
 
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$PREFIX/bin/sbx" "$HOME/.local/bin/sbx"
-echo "Linked ~/.local/bin/sbx -> $PREFIX/bin/sbx"
 "$HOME/.local/bin/sbx" version
