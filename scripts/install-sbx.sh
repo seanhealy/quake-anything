@@ -30,6 +30,18 @@
 # Optional GPU passthrough (one-time):
 #   sudo ~/.docker/sbx/libexec/containerd-shim-nerdbox-gpu-v1 install
 # Debugging a failed run: sudo ausearch -m avc -ts recent  (SELinux denials)
+#
+# Uninstall (remove sbx entirely) — run these while the sbx binary still exists,
+# in order, since they use it to tear down running state first:
+#   sbx reset          # stop + remove all sandboxes and their state
+#   sbx daemon stop    # stop the background daemon
+#   sbx logout         # optional: drop the stored Docker credentials
+#   rm ~/.local/bin/sbx                 # the symlink this script created
+#   rm -rf ~/.docker/sbx               # the binaries + bundle
+#   rm -rf ~/.local/state/sandboxes    # runtime state/logs (optional; deletes data)
+# If you ran the optional GPU step above, undo it with (needs root):
+#   sudo ~/.docker/sbx/libexec/containerd-shim-nerdbox-gpu-v1 uninstall
+# (do that BEFORE removing ~/.docker/sbx, or run the shim from a saved copy).
 set -euo pipefail
 
 REPO="docker/sbx-releases"
