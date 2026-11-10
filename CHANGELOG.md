@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Hiding a window now slides it back out to its docked edge, the reverse of
+  the show animation, instead of playing GNOME's minimize animation.
+
 ### Added
 
 - GNOME Shell 51 support.

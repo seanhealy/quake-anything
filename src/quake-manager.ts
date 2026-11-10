@@ -37,6 +37,22 @@ interface FirstFrameWatch {
     fallbackId: number;
 }
 
+type EaseParams = Parameters<Clutter.Actor['ease']>[0];
+
+/**
+ * Ease an actor's translation. Shell's ease() finds the transition it waits on
+ * by snake_case property name, so camelCase keys (the only ones the @girs types
+ * accept) make it run onStopped(true) at once while the animation still plays.
+ */
+function easeTranslation(actor: Clutter.Actor, x: number, y: number, params: EaseParams): void {
+    const props: EaseParams & Partial<Pick<Clutter.Actor, 'translation_x' | 'translation_y'>> = {
+        ...params,
+        translation_x: x,
+        translation_y: y,
+    };
+    actor.ease(props);
+}
+
 /** Shell 49+: unmaximize with no flags argument. */
 function unmaximizeWindow(win: Meta.Window): void {
     if (win.get_maximize_flags() !== 0)
@@ -499,9 +515,7 @@ export class QuakeManager {
         actor.remove_all_transitions();
         actor.set_translation(offset.x, offset.y, 0);
         this._animating.add(entryId);
-        actor.ease({
-            translationX: 0,
-            translationY: 0,
+        easeTranslation(actor, 0, 0, {
             duration: ANIM_MS,
             mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
             onStopped: () => {
@@ -521,12 +535,55 @@ export class QuakeManager {
         this._rememberQuakePercent(entryId, win, entry);
 
         const actor = win.get_compositor_private() as Clutter.Actor | null;
-        if (actor) {
-            actor.remove_all_transitions();
-            actor.set_translation(0, 0, 0);
-        }
-        this._animating.delete(entryId);
+        const rect = computeQuakeRect(
+            entry.side,
+            this._effectivePercent(entryId, entry),
+            sanitizeMonitorIndex(win.get_monitor()),
+        );
 
+        // Without a usable actor or rect we cannot slide; minimize outright.
+        if (!actor || !isValidRect(rect)) {
+            if (actor) {
+                actor.remove_all_transitions();
+                actor.set_translation(0, 0, 0);
+            }
+            this._animating.delete(entryId);
+            this._minimizeWithoutAnimation(win);
+            return;
+        }
+
+        const offset = slideOffsetForSide(entry.side, rect);
+        actor.remove_all_transitions();
+        actor.set_translation(0, 0, 0);
+        this._animating.add(entryId);
+        easeTranslation(actor, offset.x, offset.y, {
+            duration: ANIM_MS,
+            mode: Clutter.AnimationMode.EASE_IN_CUBIC,
+            onStopped: (isFinished: boolean) => {
+                this._animating.delete(entryId);
+                // Interrupted (e.g. detach/disable removed the transition):
+                // leave the window alone.
+                if (!isFinished)
+                    return;
+                if (this._windows.get(entryId) !== win || !this._isWindowAlive(win))
+                    return;
+
+                // The window is now slid fully off the work area; minimize it
+                // for real (keeping win.minimized as the source of truth) while
+                // suppressing the shell's built-in shrink animation, then reset
+                // the translation on the now-hidden actor for the next show.
+                this._minimizeWithoutAnimation(win);
+                const current = win.get_compositor_private() as Clutter.Actor | null;
+                current?.set_translation(0, 0, 0);
+            },
+        });
+    }
+
+    /** Minimize, skipping GNOME's default minimize (shrink) animation. */
+    private _minimizeWithoutAnimation(win: Meta.Window): void {
+        const actor = win.get_compositor_private() as Clutter.Actor | null;
+        if (actor)
+            Main.wm.skipNextEffect(actor);
         win.minimize();
     }
 
