@@ -66,6 +66,8 @@ export class QuakeManager {
     private _lastMonitor = new Map<string, number>();
     private _pending: PendingClaim | null = null;
     private _animating = new Set<string>();
+    /** Pressing the shortcut on a shown but unfocused window focuses it instead of hiding it. */
+    focusBeforeHide = true;
     private _applyingGeometry = new Set<string>();
     private _sourceIds = new Set<number>();
     private _firstFrameWatches = new Map<string, FirstFrameWatch>();
@@ -151,10 +153,16 @@ export class QuakeManager {
             return;
         }
 
-        if (this._isVisible(win))
-            this._hide(entryId, win, entry);
-        else
+        // Ignore presses mid-slide, whichever branch they would take.
+        if (this._animating.has(entryId))
+            return;
+
+        if (!this._isVisible(win))
             this._show(entryId, win, entry);
+        else if (this.focusBeforeHide && !win.has_focus())
+            win.activate(global.get_current_time());
+        else
+            this._hide(entryId, win, entry);
     }
 
     private _isWindowAlive(win: Meta.Window | null | undefined): boolean {

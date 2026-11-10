@@ -71,6 +71,8 @@ Quake edge and size.
 - Only windows **spawned by this extension** are controlled; other windows of
   the same app are left alone
 - Windows survive suspend and resume in place
+- If the window is shown but another window has focus, the shortcut focuses it
+  first (turn off **Focus before hiding** in Settings to always hide)
 
 ## Notes
 

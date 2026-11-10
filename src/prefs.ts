@@ -72,6 +72,15 @@ export default class QuakeAnythingPreferences extends ExtensionPreferences {
         });
         page.add(this._listGroup);
 
+        const behaviorGroup = new Adw.PreferencesGroup({title: _('Behavior')});
+        const focusRow = new Adw.SwitchRow({
+            title: _('Focus before hiding'),
+            subtitle: _('If the window is shown but not focused, the shortcut focuses it. Press again to hide.'),
+        });
+        settings.bind('focus-before-hide', focusRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        behaviorGroup.add(focusRow);
+        page.add(behaviorGroup);
+
         this._rebuildList();
         this._settingsChangedId = settings.connect('changed::entries', () => {
             this._rebuildList();

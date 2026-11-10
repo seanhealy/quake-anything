@@ -22,8 +22,13 @@ export default class QuakeAnythingExtension extends Extension {
         this._quake.enable();
         this._keys.enable();
 
+        this._syncFocusBeforeHide();
         this._reload();
-        this._settings.connectObject('changed::entries', () => this._reload(), this);
+        this._settings.connectObject(
+            'changed::entries', () => this._reload(),
+            'changed::focus-before-hide', () => this._syncFocusBeforeHide(),
+            this,
+        );
     }
 
     disable() {
@@ -37,6 +42,11 @@ export default class QuakeAnythingExtension extends Extension {
 
         this._boundIds.clear();
         this._settings = null;
+    }
+
+    private _syncFocusBeforeHide(): void {
+        if (this._settings && this._quake)
+            this._quake.focusBeforeHide = this._settings.get_boolean('focus-before-hide');
     }
 
     private _reload(): void {
