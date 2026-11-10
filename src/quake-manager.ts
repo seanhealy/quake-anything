@@ -37,6 +37,22 @@ interface FirstFrameWatch {
     fallbackId: number;
 }
 
+type EaseParams = Parameters<Clutter.Actor['ease']>[0];
+
+/**
+ * Ease an actor's translation. Shell's ease() finds the transition it waits on
+ * by snake_case property name, so camelCase keys (the only ones the @girs types
+ * accept) make it run onStopped(true) at once while the animation still plays.
+ */
+function easeTranslation(actor: Clutter.Actor, x: number, y: number, params: EaseParams): void {
+    const props: EaseParams & Partial<Pick<Clutter.Actor, 'translation_x' | 'translation_y'>> = {
+        ...params,
+        translation_x: x,
+        translation_y: y,
+    };
+    actor.ease(props);
+}
+
 /** Shell 49+: unmaximize with no flags argument. */
 function unmaximizeWindow(win: Meta.Window): void {
     if (win.get_maximize_flags() !== 0)
@@ -499,9 +515,7 @@ export class QuakeManager {
         actor.remove_all_transitions();
         actor.set_translation(offset.x, offset.y, 0);
         this._animating.add(entryId);
-        actor.ease({
-            translationX: 0,
-            translationY: 0,
+        easeTranslation(actor, 0, 0, {
             duration: ANIM_MS,
             mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
             onStopped: () => {
@@ -542,9 +556,7 @@ export class QuakeManager {
         actor.remove_all_transitions();
         actor.set_translation(0, 0, 0);
         this._animating.add(entryId);
-        actor.ease({
-            translationX: offset.x,
-            translationY: offset.y,
+        easeTranslation(actor, offset.x, offset.y, {
             duration: ANIM_MS,
             mode: Clutter.AnimationMode.EASE_IN_CUBIC,
             onStopped: (isFinished: boolean) => {
