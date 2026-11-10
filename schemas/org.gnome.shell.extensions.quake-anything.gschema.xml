@@ -16,5 +16,13 @@
         dock side, keyboard shortcut, and default size percentage.
       </description>
     </key>
+    <key name="focus-before-hide" type="b">
+      <default>true</default>
+      <summary>Focus an unfocused window before hiding it</summary>
+      <description>
+        When the shortcut is pressed while the window is shown but does not have
+        focus, raise and focus it instead of hiding it. Pressing again hides it.
+      </description>
+    </key>
   </schema>
 </schemalist>

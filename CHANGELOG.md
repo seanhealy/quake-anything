@@ -7,14 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- "Focus before hiding" setting, on by default: pressing the shortcut on a
+  shown window that doesn't have focus raises and focuses it instead of hiding
+  it. Press again to hide.
+- GNOME Shell 51 support.
+
 ### Changed
 
 - Hiding a window now slides it back out to its docked edge, the reverse of
   the show animation, instead of playing GNOME's minimize animation.
-
-### Added
-
-- GNOME Shell 51 support.
 
 ## [1.0.1] - 2026-08-25
 
